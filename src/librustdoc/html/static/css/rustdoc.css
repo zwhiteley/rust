@@ -1079,39 +1079,63 @@ pre.rust .doccomment {
 }
 
 .example-wrap.compile_fail,
-.example-wrap.should_panic {
+.example-wrap.should_panic,
+.example-wrap.tooltip_error {
 	border-left: 2px solid var(--codeblock-error-color);
 }
 
-.ignore.example-wrap {
-	border-left: 2px solid var(--codeblock-ignore-color);
+.ignore.example-wrap,
+.tooltip_warning.example-wrap {
+	border-left: 2px solid var(--codeblock-warning-color);
+}
+
+.tooltip_info.example-wrap {
+	border-left: 2px solid var(--codeblock-info-color);
 }
 
 .example-wrap.compile_fail:hover,
-.example-wrap.should_panic:hover {
+.example-wrap.should_panic:hover,
+.example-wrap.tooltip_error:hover {
 	border-left: 2px solid var(--codeblock-error-hover-color);
 }
 
-.example-wrap.ignore:hover {
-	border-left: 2px solid var(--codeblock-ignore-hover-color);
+.example-wrap.ignore:hover,
+.example-wrap.tooltip_warning:hover {
+	border-left: 2px solid var(--codeblock-warning-hover-color);
+}
+
+.example-wrap.tooltip_info:hover {
+	border-left: 2px solid var(--codeblock-info-hover-color);
 }
 
 .example-wrap.compile_fail .tooltip,
-.example-wrap.should_panic .tooltip {
+.example-wrap.should_panic .tooltip,
+.example-wrap.tooltip_error .tooltip {
 	color: var(--codeblock-error-color);
 }
 
-.example-wrap.ignore .tooltip {
-	color:  var(--codeblock-ignore-color);
+.example-wrap.ignore .tooltip,
+.example-wrap.tooltip_warning .tooltip {
+	color:  var(--codeblock-warning-color);
+}
+
+.example-wrap.tooltip_info .tooltip {
+	color:  var(--codeblock-info-color);
 }
 
 .example-wrap.compile_fail:hover .tooltip,
-.example-wrap.should_panic:hover .tooltip {
+.example-wrap.should_panic:hover .tooltip,
+.example-wrap.tooltip_error:hover .tooltip {
 	color: var(--codeblock-error-hover-color);
 }
 
-.example-wrap.ignore:hover .tooltip {
-	color: var(--codeblock-ignore-hover-color);
+.example-wrap.ignore:hover .tooltip,
+.example-wrap.tooltip_warning .tooltip {
+	color: var(--codeblock-warning-hover-color);
+}
+
+.example-wrap.tooltip_info .tooltip {
+	color: var(--codeblock-info-hover-color);
 }
 
 .example-wrap .tooltip {
@@ -1125,7 +1149,10 @@ pre.rust .doccomment {
 
 .example-wrap.compile_fail .tooltip,
 .example-wrap.should_panic .tooltip,
-.example-wrap.ignore .tooltip {
+.example-wrap.ignore .tooltip,
+.example-wrap.tooltip_error .tooltip,
+.example-wrap.tooltip_warning .tooltip,
+.example-wrap.tooltip_info .tooltip {
 	font-weight: bold;
 	font-size: 1.25rem;
 }

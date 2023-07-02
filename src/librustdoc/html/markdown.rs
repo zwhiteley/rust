@@ -36,9 +36,9 @@ use rustc_span::{Span, Symbol};
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::fmt::Write;
+use std::fmt::{self, Display, Formatter, Write};
 use std::ops::{ControlFlow, Range};
-use std::str;
+use std::str::{self, CharIndices};
 
 use crate::clean::RenderedLink;
 use crate::doctest;
@@ -94,6 +94,7 @@ pub struct Markdown<'a> {
     /// E.g. if `heading_offset: HeadingOffset::H2`, then `# something` renders an `<h2>`.
     pub heading_offset: HeadingOffset,
 }
+
 /// A struct like `Markdown` that renders the markdown with a table of contents.
 pub(crate) struct MarkdownWithToc<'a> {
     pub(crate) content: &'a str,
@@ -102,9 +103,11 @@ pub(crate) struct MarkdownWithToc<'a> {
     pub(crate) edition: Edition,
     pub(crate) playground: &'a Option<Playground>,
 }
+
 /// A tuple struct like `Markdown` that renders the markdown escaping HTML tags
 /// and includes no paragraph tags.
 pub(crate) struct MarkdownItemInfo<'a>(pub(crate) &'a str, pub(crate) &'a mut IdMap);
+
 /// A tuple struct like `Markdown` that renders only the first paragraph.
 pub(crate) struct MarkdownSummaryLine<'a>(pub &'a str, pub &'a [RenderedLink]);
 
@@ -194,7 +197,7 @@ pub struct Playground {
 }
 
 /// Adds syntax highlighting and playground Run buttons to Rust code blocks.
-struct CodeBlocks<'p, 'a, I: Iterator<Item = Event<'a>>> {
+struct CodeBlocks<'p, 'a, I: Iterator<Item=Event<'a>>> {
     inner: I,
     check_error_codes: ErrorCodes,
     edition: Edition,
@@ -203,7 +206,7 @@ struct CodeBlocks<'p, 'a, I: Iterator<Item = Event<'a>>> {
     playground: &'p Option<Playground>,
 }
 
-impl<'p, 'a, I: Iterator<Item = Event<'a>>> CodeBlocks<'p, 'a, I> {
+impl<'p, 'a, I: Iterator<Item=Event<'a>>> CodeBlocks<'p, 'a, I> {
     fn new(
         iter: I,
         error_codes: ErrorCodes,
@@ -214,11 +217,12 @@ impl<'p, 'a, I: Iterator<Item = Event<'a>>> CodeBlocks<'p, 'a, I> {
     }
 }
 
-impl<'a, I: Iterator<Item = Event<'a>>> Iterator for CodeBlocks<'_, 'a, I> {
+impl<'a, I: Iterator<Item=Event<'a>>> Iterator for CodeBlocks<'_, 'a, I> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let event = self.inner.next();
+        let custom;
         let compile_fail;
         let should_panic;
         let ignore;
@@ -251,7 +255,7 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for CodeBlocks<'_, 'a, I> {
                             lang,
                             Escape(&original_text),
                         )
-                        .into(),
+                            .into(),
                     ));
                 }
                 parse_result
@@ -262,6 +266,7 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for CodeBlocks<'_, 'a, I> {
         let lines = original_text.lines().filter_map(|l| map_line(l).for_html());
         let text = lines.intersperse("\n".into()).collect::<String>();
 
+        custom = parse_result.custom_tooltip;
         compile_fail = parse_result.compile_fail;
         should_panic = parse_result.should_panic;
         ignore = parse_result.ignore;
@@ -293,7 +298,13 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for CodeBlocks<'_, 'a, I> {
             ))
         });
 
-        let tooltip = if ignore != Ignore::None {
+        let tooltip = if let CustomTooltip::Error(msg) = custom {
+            highlight::Tooltip::CustomError(msg)
+        } else if let CustomTooltip::Warning(msg) = custom {
+            highlight::Tooltip::CustomWarning(msg)
+        } else if let CustomTooltip::Info(msg) = custom {
+            highlight::Tooltip::CustomInfo(msg)
+        } else if ignore != Ignore::None {
             highlight::Tooltip::Ignore
         } else if compile_fail {
             highlight::Tooltip::CompileFail
@@ -321,19 +332,19 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for CodeBlocks<'_, 'a, I> {
 }
 
 /// Make headings links with anchor IDs and build up TOC.
-struct LinkReplacer<'a, I: Iterator<Item = Event<'a>>> {
+struct LinkReplacer<'a, I: Iterator<Item=Event<'a>>> {
     inner: I,
     links: &'a [RenderedLink],
     shortcut_link: Option<&'a RenderedLink>,
 }
 
-impl<'a, I: Iterator<Item = Event<'a>>> LinkReplacer<'a, I> {
+impl<'a, I: Iterator<Item=Event<'a>>> LinkReplacer<'a, I> {
     fn new(iter: I, links: &'a [RenderedLink]) -> Self {
         LinkReplacer { inner: iter, links, shortcut_link: None }
     }
 }
 
-impl<'a, I: Iterator<Item = Event<'a>>> Iterator for LinkReplacer<'a, I> {
+impl<'a, I: Iterator<Item=Event<'a>>> Iterator for LinkReplacer<'a, I> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -344,11 +355,11 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for LinkReplacer<'a, I> {
             // This is a shortcut link that was resolved by the broken_link_callback: `[fn@f]`
             // Remove any disambiguator.
             Some(Event::Start(Tag::Link(
-                // [fn@f] or [fn@f][]
-                LinkType::ShortcutUnknown | LinkType::CollapsedUnknown,
-                dest,
-                title,
-            ))) => {
+                                  // [fn@f] or [fn@f][]
+                                  LinkType::ShortcutUnknown | LinkType::CollapsedUnknown,
+                                  dest,
+                                  title,
+                              ))) => {
                 debug!("saw start of shortcut link to {} with title {}", dest, title);
                 // If this is a shortcut link, it was resolved by the broken_link_callback.
                 // So the URL will already be updated properly.
@@ -366,10 +377,10 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for LinkReplacer<'a, I> {
             }
             // Now that we're done with the shortcut link, don't replace any more text.
             Some(Event::End(Tag::Link(
-                LinkType::ShortcutUnknown | LinkType::CollapsedUnknown,
-                dest,
-                _,
-            ))) => {
+                                LinkType::ShortcutUnknown | LinkType::CollapsedUnknown,
+                                dest,
+                                _,
+                            ))) => {
                 debug!("saw end of shortcut link to {}", dest);
                 if self.links.iter().any(|link| *link.href == **dest) {
                     assert!(self.shortcut_link.is_some(), "saw closing link without opening tag");
@@ -435,18 +446,18 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for LinkReplacer<'a, I> {
 }
 
 /// Wrap HTML tables into `<div>` to prevent having the doc blocks width being too big.
-struct TableWrapper<'a, I: Iterator<Item = Event<'a>>> {
+struct TableWrapper<'a, I: Iterator<Item=Event<'a>>> {
     inner: I,
     stored_events: VecDeque<Event<'a>>,
 }
 
-impl<'a, I: Iterator<Item = Event<'a>>> TableWrapper<'a, I> {
+impl<'a, I: Iterator<Item=Event<'a>>> TableWrapper<'a, I> {
     fn new(iter: I) -> Self {
         Self { inner: iter, stored_events: VecDeque::new() }
     }
 }
 
-impl<'a, I: Iterator<Item = Event<'a>>> Iterator for TableWrapper<'a, I> {
+impl<'a, I: Iterator<Item=Event<'a>>> Iterator for TableWrapper<'a, I> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -492,8 +503,8 @@ impl<'a, 'b, 'ids, I> HeadingLinks<'a, 'b, 'ids, I> {
     }
 }
 
-impl<'a, 'b, 'ids, I: Iterator<Item = SpannedEvent<'a>>> Iterator
-    for HeadingLinks<'a, 'b, 'ids, I>
+impl<'a, 'b, 'ids, I: Iterator<Item=SpannedEvent<'a>>> Iterator
+for HeadingLinks<'a, 'b, 'ids, I>
 {
     type Item = SpannedEvent<'a>;
 
@@ -542,14 +553,14 @@ impl<'a, 'b, 'ids, I: Iterator<Item = SpannedEvent<'a>>> Iterator
 }
 
 /// Extracts just the first paragraph.
-struct SummaryLine<'a, I: Iterator<Item = Event<'a>>> {
+struct SummaryLine<'a, I: Iterator<Item=Event<'a>>> {
     inner: I,
     started: bool,
     depth: u32,
     skipped_tags: u32,
 }
 
-impl<'a, I: Iterator<Item = Event<'a>>> SummaryLine<'a, I> {
+impl<'a, I: Iterator<Item=Event<'a>>> SummaryLine<'a, I> {
     fn new(iter: I) -> Self {
         SummaryLine { inner: iter, started: false, depth: 0, skipped_tags: 0 }
     }
@@ -579,7 +590,7 @@ fn is_forbidden_tag(t: &Tag<'_>) -> bool {
     )
 }
 
-impl<'a, I: Iterator<Item = Event<'a>>> Iterator for SummaryLine<'a, I> {
+impl<'a, I: Iterator<Item=Event<'a>>> Iterator for SummaryLine<'a, I> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -651,7 +662,7 @@ impl<'a, I> Footnotes<'a, I> {
     }
 }
 
-impl<'a, I: Iterator<Item = SpannedEvent<'a>>> Iterator for Footnotes<'a, I> {
+impl<'a, I: Iterator<Item=SpannedEvent<'a>>> Iterator for Footnotes<'a, I> {
     type Item = SpannedEvent<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -802,6 +813,7 @@ impl<'tcx> ExtraInfo<'tcx> {
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) struct LangString {
     original: String,
+    pub(crate) custom_tooltip: CustomTooltip,
     pub(crate) should_panic: bool,
     pub(crate) no_run: bool,
     pub(crate) ignore: Ignore,
@@ -819,10 +831,335 @@ pub(crate) enum Ignore {
     Some(Vec<String>),
 }
 
+#[derive(Eq, PartialEq, Clone, Debug)]
+pub(crate) enum CustomTooltip {
+    Error(String),
+    Warning(String),
+    Info(String),
+    None,
+}
+
+impl CustomTooltip {
+    const ERROR_PRIORITY: usize = 3;
+    const WARNING_PRIORITY: usize = 2;
+    const INFO_PRIORITY: usize = 1;
+    const NONE_PRIORITY: usize = 0;
+
+    fn name(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::Error(_) => "tooltip_error",
+            Self::Warning(_) => "tooltip_warn",
+            Self::Info(_) => "tooltip_info",
+            Self::None => return None
+        })
+    }
+
+    fn priority(&self) -> usize {
+        match self {
+            Self::Error(_) => Self::ERROR_PRIORITY,
+            Self::Warning(_) => Self::WARNING_PRIORITY,
+            Self::Info(_) => Self::INFO_PRIORITY,
+            Self::None => Self::NONE_PRIORITY
+        }
+    }
+}
+
+/// An iterator over the tokens of a [`LangString`].
+#[derive(Clone, Debug)]
+struct LsTokens<'a> {
+    /// The language/info string.
+    string: &'a str,
+
+    /// The char indices iterator of `string`.
+    iter: CharIndices<'a>,
+
+    /// Current position within `string`.
+    pos: usize,
+}
+
+/// A token within a language/info string.
+#[derive(Eq, PartialEq, Clone, Debug)]
+enum LsToken<'a> {
+    /// Traditional token (e.g., `should_panic`).
+    Normal(&'a str),
+    Function {
+        /// The name of the function.
+        name: &'a str,
+
+        /// The argument passed to the function.
+        ///
+        /// # Remarks
+        ///
+        /// String is required here as the original argument (as written in
+        /// [`LsTokens::string`]) may contain escape characters which must be removed.
+        // NOTE: there is an alternative approach which is able to avoid this allocation (by
+        // using the newtype pattern). Cow was also considered but it would require a large
+        // number of lifetime annotations (on `highlight::Tooltip`, `LangString`, etc)
+        arg: String
+    },
+}
+
+/// An error during the tokenization of a language/info string.
+#[derive(Eq, PartialEq, Clone, Debug)]
+struct LsError {
+    /// The type of the error.
+    kind: LsErrorKind,
+
+    /// The position within the string the error occurred.
+    position: usize,
+}
+
+/// The type of a [`LsError`].
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
+enum LsErrorKind {
+    /// A function token has no name.
+    FuncNoName,
+
+    /// A function token is missing its opening brace.
+    //FuncOpenBrace,
+
+    /// A function token is missing its start quote.
+    FuncStartQuote,
+
+    /// A function token is missing its end quote.
+    FuncEndQuote,
+
+    /// A function token is missing its closing brace.
+    FuncCloseBrace,
+
+    /// An invalid escape sequence was found.
+    InvalidEscape,
+}
+
+impl Display for LsErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::FuncNoName => f.write_str("function has no name"),
+            //Self::FuncOpenBrace => f.write_str("function has no opening brace"),
+            Self::FuncStartQuote => f.write_str("function has no starting quote"),
+            Self::FuncEndQuote => f.write_str("function has no ending quote"),
+            Self::FuncCloseBrace => f.write_str("function has no closing brace"),
+            Self::InvalidEscape => f.write_str("invalid escape sequence")
+        }
+    }
+}
+
+impl Display for LsError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "error at position {pos}: {kind}", kind = self.kind, pos = self.position)
+    }
+}
+
+impl std::error::Error for LsError {}
+
+/// Escapes an argument.
+fn escape_argument(arg: &str) -> Result<String, usize> {
+    let mut string = String::with_capacity(arg.len());
+    let mut iter = arg.char_indices();
+
+    while let Some((idx, c)) = iter.next() {
+        if c == '\\' {
+            match iter.next() {
+                Some((_, c @ ('"' | '\\'))) => string.push(c),
+                Some((idx, _)) => return Err(idx),
+                None => return Err(idx)
+            }
+        } else {
+            string.push(c);
+        }
+    }
+
+    Ok(string)
+}
+
+impl<'a> LsTokens<'a> {
+    fn new(string: &'a str) -> Self {
+        Self {
+            string,
+            iter: string.char_indices(),
+            pos: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for LsTokens<'a> {
+    type Item = Result<LsToken<'a>, LsError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use LsToken as Token;
+        use LsError as Error;
+        use LsErrorKind as Kind;
+
+        if self.pos == self.string.len() { return None; }
+
+        #[derive(Clone, Copy, Debug)]
+        enum Mode {
+            /// Trimming mode for removing whitespace before tokens.
+            Trim,
+            Normal,
+
+            /// Function mode for the function-like annotations.
+            Function,
+        }
+
+        let mut mode = Mode::Trim;
+        let mut name_idx = None;
+
+        while let Some((idx, c)) = self.iter.next() {
+            // Uplifted 'c' to reduce indentation
+            match (mode, c) {
+                //
+                // Mode::Trim
+                //
+                (Mode::Trim, '.') => {
+                    // Pandoc, which Rust once used for generating documentation,
+                    // expects lang strings to be surrounded by `{}` and for each token
+                    // to be proceeded by a `.`. Since some of these lang strings are still
+                    // loose in the wild, we strip a leading `.` from each token (if present).
+                    self.pos += 1;
+                    mode = Mode::Normal;
+                }
+                (Mode::Trim, x) if x.is_whitespace() => self.pos += 1,
+                (Mode::Trim, _) => mode = Mode::Normal,
+
+                //
+                // Mode::Normal
+                //
+                (Mode::Normal, ' ' | '\t' | ',') => {
+                    let token = Token::Normal(&self.string[self.pos..idx]);
+
+                    // Panic Safety: idx is guaranteed to be one byte long as
+                    // self.string[idx] is one of the ASCII characters ' ', '\t', or ','
+                    self.pos = idx + 1;
+                    return Some(Ok(token));
+                }
+                // An opening brace indicates the start of a function
+                (Mode::Normal, '(') => {
+                    // NOTE: name length check (to ensure the name of the function is not
+                    // zero characters long) is not done here as it can be recovered from
+
+                    if let Some((_idx_quote, '"')) = self.iter.next() {
+                        // Panic Safety: '(' is an ASCII character and is therefore 1 byte
+                        // long
+                        name_idx = Some(idx - 1);
+
+                        mode = Mode::Function;
+                    } else {
+                        // Function must be missing start quote if it does not meet pattern
+                        // above
+
+                        // Terminate `Tokens` iter to prevent misinterpretation
+                        self.pos = self.string.len();
+                        return Some(Err(Error {
+                            kind: Kind::FuncStartQuote,
+                            position: idx,
+                        }));
+                    }
+                }
+                (Mode::Normal, _) => {}
+
+                //
+                // Mode::Function
+                //
+
+                // A '"' indicates the end of a function (in this mode)
+                (Mode::Function, '"') => {
+                    // Check for closing brace
+                    return if let Some((brace_idx, ')')) = self.iter.next() {
+                        // Panic Safety: `name_idx` must be set for this mode to be
+                        // "activated"
+                        let name_idx = name_idx.unwrap();
+
+                        // Get the name of the function
+                        let name = &self.string[self.pos..=name_idx];
+                        let arg_slice = &self.string[(name_idx + 3)..idx];
+
+                        // Check name is not zero length
+                        if name.is_empty() {
+                            // Panic Safety: ')' is an ASCII character and is
+                            // therefore 1 byte long
+                            self.pos = brace_idx + 1;
+
+                            return Some(Err(Error {
+                                kind: Kind::FuncNoName,
+                                position: name_idx,
+                            }));
+                        }
+
+                        let arg;
+                        match escape_argument(arg_slice) {
+                            Ok(value) => arg = value,
+                            Err(idx) => return Some(Err(Error {
+                                kind: Kind::InvalidEscape,
+
+                                // idx returned from `escape_argument` is relative to
+                                // `arg_slice`, not `self.string`
+                                position: name_idx + 2 + idx,
+                            }))
+                        }
+
+                        // Panic Safety: ')' is an ASCII character and is
+                        // therefore 1 byte long
+                        self.pos = brace_idx + 1;
+
+                        eprintln!("{name} {arg}");
+
+                        Some(Ok(Token::Function {
+                            name,
+                            arg,
+                        }))
+                    } else {
+                        // Function must be missing closing brace if it does not meet pattern
+                        // above
+
+                        // Terminate `Tokens` iter to prevent misinterpretation
+                        self.pos = self.string.len();
+                        Some(Err(Error {
+                            kind: Kind::FuncCloseBrace,
+                            position: idx,
+                        }))
+                    };
+                }
+                // Skip any escaped characters (check all escape combinations later)
+                // NOTE: error check not done here as it is a potentially recoverable issue
+                (Mode::Function, '\\') => _ = self.iter.next(),
+                (Mode::Function, _) => {}
+            }
+        }
+
+        // When this line is reached, `self.iter` is empty
+        match mode {
+            // NOTE: it is possible to have `Mode::Normal` without any characters (e.g., if the
+            // last character was a `.` which was trimmed)
+            Mode::Normal if self.pos < self.string.len() => {
+                let slice = &self.string[self.pos..];
+                self.pos = self.string.len();
+                Some(Ok(Token::Normal(slice)))
+            }
+
+            // If this is reached, it means the function was never terminated (i.e., that a '"'
+            // was never encountered)
+            Mode::Function => {
+                let func_start = self.pos;
+                self.pos = self.string.len();
+                Some(Err(Error {
+                    kind: Kind::FuncEndQuote,
+                    position: func_start,
+                }))
+            }
+
+            // Mode::Trim does not need to be considered as it does not add characters, it only
+            // removes them
+            _ => None
+        }
+    }
+}
+
 impl Default for LangString {
     fn default() -> Self {
         Self {
             original: String::new(),
+            custom_tooltip: CustomTooltip::None,
             should_panic: false,
             no_run: false,
             ignore: Ignore::None,
@@ -844,12 +1181,12 @@ impl LangString {
         Self::parse(string, allow_error_code_check, enable_per_target_ignores, None)
     }
 
-    fn tokens(string: &str) -> impl Iterator<Item = &str> {
+    fn tokens(string: &str) -> impl Iterator<Item=Result<LsToken<'_>, LsError>> {
         // Pandoc, which Rust once used for generating documentation,
         // expects lang strings to be surrounded by `{}` and for each token
         // to be proceeded by a `.`. Since some of these lang strings are still
         // loose in the wild, we strip a pair of surrounding `{}` from the lang
-        // string and a leading `.` from each token.
+        // string.
 
         let string = string.trim();
 
@@ -862,11 +1199,7 @@ impl LangString {
             string
         };
 
-        string
-            .split(|c| c == ',' || c == ' ' || c == '\t')
-            .map(str::trim)
-            .map(|token| token.strip_prefix('.').unwrap_or(token))
-            .filter(|token| !token.is_empty())
+        LsTokens::new(string)
     }
 
     fn parse(
@@ -884,42 +1217,125 @@ impl LangString {
         data.original = string.to_owned();
 
         for token in Self::tokens(string) {
+            let token = match token {
+                Ok(token) => token,
+                Err(error) => {
+                    let Some(extra) = extra else { continue; };
+
+                    match error.kind {
+                        LsErrorKind::FuncNoName => extra.error_invalid_codeblock_attr(
+                            "function-like attributes must have a name".to_owned(),
+                            ""
+                        ),
+                        LsErrorKind::FuncStartQuote => extra.error_invalid_codeblock_attr(
+                            "function-like attribute is missing its opening quote".to_owned(),
+                            "the open parenthesis '(' indicates the start of a function and will \
+                            prevent subsequent attributes from being considered"
+                        ),
+                        LsErrorKind::FuncEndQuote => extra.error_invalid_codeblock_attr(
+                            "function-like attribute is missing its ending quote".to_owned(),
+                            "if you are attempting to use multiline strings, they are not supported \
+                            for function-like attributes"
+                        ),
+                        LsErrorKind::FuncCloseBrace => extra.error_invalid_codeblock_attr(
+                            "function-like attribute is missing its closing brace".to_owned(),
+                            "if you are trying to include a quotation mark `\"` in the argument,\
+                            precede it with the escape character `\\`"
+                        ),
+                        LsErrorKind::InvalidEscape => extra.error_invalid_codeblock_attr(
+                            "invalid escape sequence".to_owned(),
+                            "function-like attributes only support two valid escape sequences: \
+                            `\\\"` and `\\\\`"
+                        )
+                    }
+
+                    continue;
+                }
+            };
+
             match token {
-                "should_panic" => {
+                LsToken::Function { name, arg } if name.starts_with("tooltip_") => {
+                    let tooltip = match name {
+                        "tooltip_error" => CustomTooltip::Error(arg),
+                        "tooltip_warn" => CustomTooltip::Warning(arg),
+                        "tooltip_info" => CustomTooltip::Info(arg),
+
+                        // Invalid `LsToken::Normal` tokens are currently ignored (except in
+                        // cases whereby they resemble another attribute
+                        _ => continue
+                    };
+
+                    if data.custom_tooltip == CustomTooltip::None {
+                        data.custom_tooltip = tooltip;
+                    } else if tooltip.priority() >= data.custom_tooltip.priority() {
+                        if let Some(extra) = extra {
+                            extra.error_invalid_codeblock_attr(
+                                format!(
+                                    "higher priority tooltip attribute `{}` overrides lower \
+                                    priority/previous tooltip attribute `{}`.",
+
+                                    // Panic Safety: `tooltip` cannot be `CustomTooltip::None`
+                                    // and therefore `tooltip.name()` cannot return `None`
+                                    tooltip.name().unwrap(),
+                                    data.custom_tooltip.name().unwrap()
+                                ),
+                                "remove the redundant tooltip attributes"
+                            )
+                        }
+
+                        data.custom_tooltip = tooltip;
+                    } else if let Some(extra) = extra {
+                        extra.error_invalid_codeblock_attr(
+                            // Panic Safety: `tooltip` cannot be `CustomTooltip::None` and therefore
+                            // `tooltip.name()` cannot return `None`
+                            format!(
+                                "higher priority tooltip attribute `{}` overrides lower \
+                                priority tooltip attribute `{}`.",
+
+                                // Panic Safety: `tooltip` cannot be `CustomTooltip::None`
+                                // and therefore `tooltip.name()` cannot return `None`
+                                tooltip.name().unwrap(),
+                                data.custom_tooltip.name().unwrap()
+                            ),
+                            "remove thee redundant tooltip attributes"
+                        );
+                    }
+                }
+                LsToken::Normal("should_panic") => {
                     data.should_panic = true;
                     seen_rust_tags = !seen_other_tags;
                 }
-                "no_run" => {
+                LsToken::Normal("no_run") => {
                     data.no_run = true;
                     seen_rust_tags = !seen_other_tags;
                 }
-                "ignore" => {
+                LsToken::Normal("ignore") => {
                     data.ignore = Ignore::All;
                     seen_rust_tags = !seen_other_tags;
                 }
-                x if x.starts_with("ignore-") => {
+                LsToken::Normal(x) if x.starts_with("ignore-") => {
                     if enable_per_target_ignores {
                         ignores.push(x.trim_start_matches("ignore-").to_owned());
                         seen_rust_tags = !seen_other_tags;
                     }
                 }
-                "rust" => {
+                LsToken::Normal("rust") => {
                     data.rust = true;
                     seen_rust_tags = true;
                 }
-                "test_harness" => {
+                LsToken::Normal("test_harness") => {
                     data.test_harness = true;
                     seen_rust_tags = !seen_other_tags || seen_rust_tags;
                 }
-                "compile_fail" => {
+                LsToken::Normal("compile_fail") => {
                     data.compile_fail = true;
                     seen_rust_tags = !seen_other_tags || seen_rust_tags;
                     data.no_run = true;
                 }
-                x if x.starts_with("edition") => {
+                LsToken::Normal(x) if x.starts_with("edition") => {
                     data.edition = x[7..].parse::<Edition>().ok();
                 }
-                x if allow_error_code_check && x.starts_with('E') && x.len() == 5 => {
+                LsToken::Normal(x) if allow_error_code_check && x.starts_with('E') && x.len() == 5 => {
                     if x[1..].parse::<u32>().is_ok() {
                         data.error_codes.push(x.to_owned());
                         seen_rust_tags = !seen_other_tags || seen_rust_tags;
@@ -927,7 +1343,7 @@ impl LangString {
                         seen_other_tags = true;
                     }
                 }
-                x if extra.is_some() => {
+                LsToken::Normal(x) if extra.is_some() => {
                     let s = x.to_lowercase();
                     if let Some((flag, help)) = if s == "compile-fail"
                         || s == "compile_fail"
@@ -1382,27 +1798,27 @@ pub(crate) fn markdown_links<R>(
         main_body_opts(),
         Some(&mut |link: BrokenLink<'_>| Some((link.reference, "".into()))),
     )
-    .into_offset_iter()
-    .filter_map(|(event, span)| match event {
-        Event::Start(Tag::Link(link_type, dest, _)) if may_be_doc_link(link_type) => {
-            let range = match link_type {
-                // Link is pulled from the link itself.
-                LinkType::ReferenceUnknown | LinkType::ShortcutUnknown => {
-                    span_for_offset_backward(span, b'[', b']')
-                }
-                LinkType::CollapsedUnknown => span_for_offset_forward(span, b'[', b']'),
-                LinkType::Inline => span_for_offset_backward(span, b'(', b')'),
-                // Link is pulled from elsewhere in the document.
-                LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut => {
-                    span_for_link(&dest, span)
-                }
-                LinkType::Autolink | LinkType::Email => unreachable!(),
-            };
-            preprocess_link(MarkdownLink { kind: link_type, range, link: dest.into_string() })
-        }
-        _ => None,
-    })
-    .collect()
+        .into_offset_iter()
+        .filter_map(|(event, span)| match event {
+            Event::Start(Tag::Link(link_type, dest, _)) if may_be_doc_link(link_type) => {
+                let range = match link_type {
+                    // Link is pulled from the link itself.
+                    LinkType::ReferenceUnknown | LinkType::ShortcutUnknown => {
+                        span_for_offset_backward(span, b'[', b']')
+                    }
+                    LinkType::CollapsedUnknown => span_for_offset_forward(span, b'[', b']'),
+                    LinkType::Inline => span_for_offset_backward(span, b'(', b')'),
+                    // Link is pulled from elsewhere in the document.
+                    LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut => {
+                        span_for_link(&dest, span)
+                    }
+                    LinkType::Autolink | LinkType::Email => unreachable!(),
+                };
+                preprocess_link(MarkdownLink { kind: link_type, range, link: dest.into_string() })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(Debug)]

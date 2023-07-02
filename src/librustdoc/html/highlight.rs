@@ -37,9 +37,12 @@ pub(crate) struct HrefContext<'a, 'tcx> {
 #[derive(Default)]
 pub(crate) struct DecorationInfo(pub(crate) FxHashMap<&'static str, Vec<(u32, u32)>>);
 
-#[derive(Eq, PartialEq, Clone, Copy)]
+#[derive(Eq, PartialEq, Clone)]
 pub(crate) enum Tooltip {
     Ignore,
+    CustomError(String),
+    CustomWarning(String),
+    CustomInfo(String),
     CompileFail,
     ShouldPanic,
     Edition(Edition),
@@ -70,6 +73,9 @@ fn write_header(out: &mut Buffer, class: &str, extra_content: Option<Buffer>, to
         out,
         "<div class=\"example-wrap{}\">",
         match tooltip {
+            Tooltip::CustomError(_) => " tooltip_error",
+            Tooltip::CustomWarning(_) => " tooltip_warning",
+            Tooltip::CustomInfo(_) => " tooltip_info",
             Tooltip::Ignore => " ignore",
             Tooltip::CompileFail => " compile_fail",
             Tooltip::ShouldPanic => " should_panic",
@@ -79,11 +85,16 @@ fn write_header(out: &mut Buffer, class: &str, extra_content: Option<Buffer>, to
     );
 
     if tooltip != Tooltip::None {
+        let message;
         let edition_code;
         write!(
             out,
             "<a href=\"#\" class=\"tooltip\" title=\"{}\">ⓘ</a>",
             match tooltip {
+                Tooltip::CustomError(msg) | Tooltip::CustomWarning(msg) | Tooltip::CustomInfo(msg) => {
+                    message = msg;
+                    &message
+                },
                 Tooltip::Ignore => "This example is not tested",
                 Tooltip::CompileFail => "This example deliberately fails to compile",
                 Tooltip::ShouldPanic => "This example panics",
